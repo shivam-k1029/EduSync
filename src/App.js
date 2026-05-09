@@ -135,6 +135,34 @@ const App = () => {
   const [showCourseManage, setShowCourseManage] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 28)); // April 28, 2026
   const [selectedEventDate, setSelectedEventDate] = useState(null);
+  const [connectedPlatforms, setConnectedPlatforms] = useState(['Canvas LMS']);
+  const [integrationMessages, setIntegrationMessages] = useState({});
+
+  // --- INTEGRATION HANDLERS ---
+  const handleConnect = (platformName) => {
+    if (connectedPlatforms.includes(platformName)) {
+      // Disconnect
+      setConnectedPlatforms(connectedPlatforms.filter(p => p !== platformName));
+      setIntegrationMessages({...integrationMessages, [platformName]: null});
+    } else {
+      // Connect - simulate OAuth flow
+      const oauthUrls = {
+        'Gmail': 'https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=https://www.googleapis.com/auth/gmail.readonly',
+        'Slack': 'https://slack.com/oauth_authorize?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=chat:read,chat:write',
+        'WhatsApp': 'https://www.whatsapp.com/business/api',
+        'Trello': 'https://trello.com/app-key',
+        'Google Calendar': 'https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=https://www.googleapis.com/auth/calendar.readonly'
+      };
+      
+      // For demo purposes, directly connect without actual OAuth
+      setConnectedPlatforms([...connectedPlatforms, platformName]);
+      setIntegrationMessages({...integrationMessages, [platformName]: `✓ Successfully connected to ${platformName}!`});
+      
+      // Simulate some data fetching
+      console.log(`Connecting to ${platformName}...`);
+      console.log(`OAuth URL: ${oauthUrls[platformName] || 'Not configured'}`);
+    }
+  };
 
   // --- HELPER FUNCTIONS ---
   const getUrgency = (deadline) => {
@@ -1138,36 +1166,49 @@ const App = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
-                { name: "Canvas LMS", icon: "🎓", status: "Connected", color: "emerald" },
-                { name: "Gmail", icon: "📧", status: "Connect", color: "slate" },
-                { name: "WhatsApp", icon: "💬", status: "Connect", color: "slate" },
-                { name: "Slack", icon: "💼", status: "Connect", color: "slate" },
-                { name: "Trello", icon: "📋", status: "Connect", color: "slate" },
-                { name: "Google Calendar", icon: "📅", status: "Connect", color: "slate" },
-              ].map(platform => (
-                <div key={platform.name} className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                  platform.status === 'Connected'
-                    ? `border-emerald-200 ${darkMode ? 'bg-slate-700' : 'bg-emerald-50'}`
-                    : `border-slate-200 ${darkMode ? 'bg-slate-700 hover:border-slate-300' : 'bg-white hover:border-slate-300'}`
-                }`}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-3xl">{platform.icon}</span>
-                      <div>
-                        <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{platform.name}</p>
-                        <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Click to configure</p>
+                { name: "Canvas LMS", icon: "🎓" },
+                { name: "Gmail", icon: "📧" },
+                { name: "WhatsApp", icon: "💬" },
+                { name: "Slack", icon: "💼" },
+                { name: "Trello", icon: "📋" },
+                { name: "Google Calendar", icon: "📅" },
+              ].map(platform => {
+                const isConnected = connectedPlatforms.includes(platform.name);
+                const message = integrationMessages[platform.name];
+                return (
+                  <div key={platform.name} className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                    isConnected
+                      ? `border-emerald-200 ${darkMode ? 'bg-slate-700' : 'bg-emerald-50'}`
+                      : `border-slate-200 ${darkMode ? 'bg-slate-700 hover:border-slate-300' : 'bg-white hover:border-slate-300'}`
+                  }`} onClick={() => handleConnect(platform.name)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">{platform.icon}</span>
+                        <div>
+                          <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{platform.name}</p>
+                          <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                            {isConnected ? 'Click to disconnect' : 'Click to connect'}
+                          </p>
+                        </div>
                       </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleConnect(platform.name);
+                        }}
+                        className={`text-xs font-bold px-3 py-1 rounded-lg transition-colors ${
+                          isConnected
+                            ? 'bg-emerald-200 text-emerald-700 hover:bg-emerald-300'
+                            : darkMode ? 'bg-slate-600 text-slate-300 hover:bg-slate-500' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                        }`}
+                      >
+                        {isConnected ? 'Connected' : 'Connect'}
+                      </button>
                     </div>
-                    <span className={`text-xs font-bold px-3 py-1 rounded-lg ${
-                      platform.status === 'Connected'
-                        ? 'bg-emerald-200 text-emerald-700'
-                        : darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-200 text-slate-600'
-                    }`}>
-                      {platform.status}
-                    </span>
+                    {message && <p className="text-xs text-emerald-600 mt-2 font-semibold">{message}</p>}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-xl flex gap-3">
