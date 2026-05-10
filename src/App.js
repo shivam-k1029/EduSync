@@ -107,12 +107,7 @@ const INITIAL_NOTIFICATIONS = [
   }
 ];
 
-const SAMPLE_INSIGHTS = [
-  { label: "On-Time Completion", value: "92%", trend: "+5%", icon: "📈" },
-  { label: "Avg. Lead Time", value: "4.2d", trend: "-0.8d", icon: "⏱️" },
-  { label: "Productivity Score", value: "8.7/10", trend: "+0.3", icon: "🎯" },
-  { label: "Time Estimation Accuracy", value: "87%", trend: "+2%", icon: "🎲" }
-];
+// SAMPLE_INSIGHTS removed — now computed dynamically from notifications + connectedPlatforms
 
 const App = () => {
   const [activeView, setActiveView] = useState('dashboard');
@@ -135,32 +130,97 @@ const App = () => {
   const [showCourseManage, setShowCourseManage] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 28)); // April 28, 2026
   const [selectedEventDate, setSelectedEventDate] = useState(null);
-  const [connectedPlatforms, setConnectedPlatforms] = useState(['Canvas LMS']);
-  const [integrationMessages, setIntegrationMessages] = useState({});
+  // --- INTEGRATION STATE (persisted to localStorage) ---
+  const [connectedPlatforms, setConnectedPlatformsRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem('edusync_connected_platforms');
+      return saved ? JSON.parse(saved) : ['Canvas LMS'];
+    } catch { return ['Canvas LMS']; }
+  });
+  const [platformMeta, setPlatformMetaRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem('edusync_platform_meta');
+      return saved ? JSON.parse(saved) : { 'Canvas LMS': { connectedAt: new Date().toISOString(), syncedAt: new Date().toISOString() } };
+    } catch { return {}; }
+  });
+  const [connectingPlatform, setConnectingPlatform] = useState(null); // name of platform currently going through flow
+  const [connectStep, setConnectStep] = useState(0); // 0=idle 1=authorizing 2=fetching 3=done
+
+  const setConnectedPlatforms = (val) => {
+    const next = typeof val === 'function' ? val(connectedPlatforms) : val;
+    setConnectedPlatformsRaw(next);
+    localStorage.setItem('edusync_connected_platforms', JSON.stringify(next));
+  };
+  const setPlatformMeta = (val) => {
+    const next = typeof val === 'function' ? val(platformMeta) : val;
+    setPlatformMetaRaw(next);
+    localStorage.setItem('edusync_platform_meta', JSON.stringify(next));
+  };
+
+  // Mock notifications injected per platform when connected
+  const PLATFORM_MOCK_NOTIFICATIONS = {
+    'Gmail': [
+      { id: 9001, title: 'Prof. Sharma: Assignment Extension Granted', course: 'Mathematics III', source: 'Email (Gmail)', type: 'announcement', priority: 'high', deadline: new Date(Date.now() + 3*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Prof. Sharma has granted a 48-hour extension for Problem Set 4 due to the lab downtime.', status: 'pending', progress: 0, subtasks: [], attachments: 1, collaborators: ['Prof. Sharma'], tags: ['email', 'extension'], estimatedHours: 0, completedHours: 0 },
+      { id: 9002, title: 'Internship Application: Interview Scheduled', course: 'Career', source: 'Email (Gmail)', type: 'announcement', priority: 'critical', deadline: new Date(Date.now() + 1*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Your interview with TechCorp has been scheduled for tomorrow at 10 AM via Google Meet.', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['email', 'career'], estimatedHours: 2, completedHours: 0 },
+    ],
+    'Slack': [
+      { id: 9003, title: 'DSA Study Group: Session Tonight 8 PM', course: 'Data Structures & Algorithms', source: 'Slack', type: 'announcement', priority: 'medium', deadline: new Date(Date.now() + 10*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: '#dsa-group: "Covering Binary Trees and AVL rotations tonight. Please read Chapter 12 beforehand."', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: ['Alice', 'Bob', 'Riya'], tags: ['slack', 'study-group'], estimatedHours: 2, completedHours: 0 },
+      { id: 9004, title: 'TA Channel: Lab 3 Rubric Posted', course: 'Web & App Programming', source: 'Slack', type: 'assignment', priority: 'medium', deadline: new Date(Date.now() + 4*24*60*60*1000).toISOString(), weight: '15%', link: '#', description: '#wap-lab: "Lab 3 rubric is now live in the files tab. Pay close attention to the accessibility criteria."', status: 'pending', progress: 0, subtasks: [{ id:1, title:'Read rubric', completed:false },{ id:2, title:'Update components', completed:false }], attachments: 1, collaborators: ['TA Priya'], tags: ['slack', 'lab'], estimatedHours: 4, completedHours: 0 },
+    ],
+    'WhatsApp': [
+      { id: 9005, title: 'Class Group: Venue Changed — Room 402', course: 'Fundamental System Thinking', source: 'WhatsApp', type: 'announcement', priority: 'high', deadline: new Date(Date.now() + 18*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Class WhatsApp: "Tomorrow\'s FST lecture has moved to Block B, Room 402. Please note the change."', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['whatsapp', 'venue'], estimatedHours: 0, completedHours: 0 },
+    ],
+    'Trello': [
+      { id: 9006, title: 'EduSync Project: Testing Card Overdue', course: 'Software Engineering', source: 'Trello', type: 'assignment', priority: 'critical', deadline: new Date(Date.now() + 6*60*60*1000).toISOString(), weight: '40%', link: '#', description: 'Trello card "Testing & Debugging" in the EduSync board is overdue and blocking deployment.', status: 'in-progress', progress: 40, subtasks: [{ id:1, title:'Write unit tests', completed:false },{ id:2, title:'Fix regression bugs', completed:false }], attachments: 2, collaborators: ['Charlie', 'Alice'], tags: ['trello', 'project'], estimatedHours: 6, completedHours: 2 },
+    ],
+    'Google Calendar': [
+      { id: 9007, title: 'Mid-Semester Review: Block Your Calendar', course: 'All Courses', source: 'Google Calendar', type: 'announcement', priority: 'medium', deadline: new Date(Date.now() + 5*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Mid-semester review week begins Friday. 4 exams scheduled across 5 days — your calendar has been updated.', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['calendar', 'exams'], estimatedHours: 0, completedHours: 0 },
+    ],
+  };
+
+  const CONNECT_STEPS = [
+    { label: 'Initiating OAuth handshake...', duration: 900 },
+    { label: 'Verifying credentials...', duration: 700 },
+    { label: 'Fetching your data...', duration: 1000 },
+  ];
 
   // --- INTEGRATION HANDLERS ---
   const handleConnect = (platformName) => {
     if (connectedPlatforms.includes(platformName)) {
-      // Disconnect
-      setConnectedPlatforms(connectedPlatforms.filter(p => p !== platformName));
-      setIntegrationMessages({...integrationMessages, [platformName]: null});
+      // Disconnect — remove state + remove injected notifications
+      const idsToRemove = (PLATFORM_MOCK_NOTIFICATIONS[platformName] || []).map(n => n.id);
+      setNotifications(prev => prev.filter(n => !idsToRemove.includes(n.id)));
+      setConnectedPlatforms(prev => prev.filter(p => p !== platformName));
+      setPlatformMeta(prev => { const next = {...prev}; delete next[platformName]; return next; });
     } else {
-      // Connect - simulate OAuth flow
-      const oauthUrls = {
-        'Gmail': 'https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=https://www.googleapis.com/auth/gmail.readonly',
-        'Slack': 'https://slack.com/oauth_authorize?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=chat:read,chat:write',
-        'WhatsApp': 'https://www.whatsapp.com/business/api',
-        'Trello': 'https://trello.com/app-key',
-        'Google Calendar': 'https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=http://localhost:3000&scope=https://www.googleapis.com/auth/calendar.readonly'
+      // Multi-step connect flow
+      setConnectingPlatform(platformName);
+      setConnectStep(1);
+      let step = 1;
+      const advance = () => {
+        step++;
+        if (step <= CONNECT_STEPS.length) {
+          setConnectStep(step);
+          setTimeout(advance, CONNECT_STEPS[step - 1]?.duration || 800);
+        } else {
+          // Done — persist and inject notifications
+          setConnectedPlatforms(prev => [...prev, platformName]);
+          setPlatformMeta(prev => ({
+            ...prev,
+            [platformName]: { connectedAt: new Date().toISOString(), syncedAt: new Date().toISOString() }
+          }));
+          if (PLATFORM_MOCK_NOTIFICATIONS[platformName]) {
+            setNotifications(prev => {
+              const existingIds = new Set(prev.map(n => n.id));
+              const fresh = PLATFORM_MOCK_NOTIFICATIONS[platformName].filter(n => !existingIds.has(n.id));
+              return [...fresh, ...prev];
+            });
+          }
+          setConnectStep(0);
+          setConnectingPlatform(null);
+        }
       };
-      
-      // For demo purposes, directly connect without actual OAuth
-      setConnectedPlatforms([...connectedPlatforms, platformName]);
-      setIntegrationMessages({...integrationMessages, [platformName]: `✓ Successfully connected to ${platformName}!`});
-      
-      // Simulate some data fetching
-      console.log(`Connecting to ${platformName}...`);
-      console.log(`OAuth URL: ${oauthUrls[platformName] || 'Not configured'}`);
+      setTimeout(advance, CONNECT_STEPS[0].duration);
     }
   };
 
@@ -224,6 +284,34 @@ const App = () => {
     return { total, completed, inProgress, critical, overdue, avgProgress, completionRate };
   }, [notifications]);
 
+  // Dynamic insights — recompute whenever notifications or connected platforms change
+  const dynamicInsights = useMemo(() => {
+    const tot = notifications.length || 1;
+    const done = notifications.filter(n => n.status === 'completed').length;
+    const onTime = Math.min(100, Math.round((done / tot) * 100) + (connectedPlatforms.length * 3));
+
+    const leads = notifications
+      .filter(n => n.status !== 'completed')
+      .map(n => (new Date(n.deadline) - new Date()) / 86400000)
+      .filter(d => d > 0);
+    const avgLead = leads.length ? (leads.reduce((a,b)=>a+b,0)/leads.length).toFixed(1) : null;
+
+    const prodScore = Math.min(10, 6.5 + connectedPlatforms.length * 0.3 + (done/tot)*2).toFixed(1);
+
+    const timed = notifications.filter(n => n.estimatedHours > 0 && n.completedHours > 0);
+    const accuracy = timed.length
+      ? Math.round(timed.reduce((a,n)=>a+Math.min(100,(n.completedHours/n.estimatedHours)*100),0)/timed.length)
+      : Math.min(99, 78 + connectedPlatforms.length * 3);
+
+    const pBonus = (connectedPlatforms.length * 0.3).toFixed(1);
+    return [
+      { label:'On-Time Completion', value:`${onTime}%`,              trend: connectedPlatforms.length>1?`+${connectedPlatforms.length*2}%`:'+0%', icon:'📈', up:true  },
+      { label:'Avg. Lead Time',     value: avgLead ? `${avgLead}d` : '—', trend: avgLead && avgLead<3?'⚠ tight':'✓ ok',                                 icon:'⏱️', up:false },
+      { label:'Productivity Score', value:`${prodScore}/10`,          trend:`+${pBonus} platforms`,                                                  icon:'🎯', up:true  },
+      { label:'Time Accuracy',      value:`${accuracy}%`,             trend: accuracy>85?`+${accuracy-78}%`:`${accuracy-78}%`,               icon:'🎲', up:accuracy>85 },
+    ];
+  }, [notifications, connectedPlatforms]);
+
   const handleToggleSubtask = (notifId, subtaskId) => {
     setNotifications(prev => prev.map(notif => {
       if (notif.id === notifId) {
@@ -254,7 +342,7 @@ const App = () => {
       <div className="flex justify-between items-start">
         <div>
           <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">Academic Hub</h1>
-          <p className="text-slate-500 mt-1">Your intelligent task management & analytics center</p>
+          <p className="text-slate-500 mt-1">Synced across {connectedPlatforms.length} platform{connectedPlatforms.length !== 1 ? 's' : ''} · {stats.total} tasks tracked</p>
         </div>
         <div className="flex gap-3">
           <button className="p-2 hover:bg-slate-100 rounded-xl transition-all" onClick={() => setDarkMode(!darkMode)} title="Toggle dark mode">
@@ -302,18 +390,59 @@ const App = () => {
         />
       </div>
 
-      {/* Insights Section */}
+      {/* Platform Connection Banner — appears when 2+ platforms connected */}
+      {connectedPlatforms.length > 1 && (
+        <div
+          className={`rounded-2xl p-4 border flex items-center gap-4 flex-wrap ${darkMode ? 'bg-teal-900/30 border-teal-700' : 'bg-teal-50 border-teal-200'}`}
+          style={{ animation: 'fadeSlideIn .4s cubic-bezier(.16,1,.3,1)' }}
+        >
+          <style>{`@keyframes fadeSlideIn { from { opacity:0; transform:translateY(-8px) } to { opacity:1; transform:translateY(0) } }`}</style>
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${darkMode ? 'bg-teal-700' : 'bg-teal-500'}`}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="9" cy="9" r="8" stroke="white" strokeWidth="1.5" fill="none"/>
+              <path d="M5 9l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`text-sm font-bold ${darkMode ? 'text-teal-200' : 'text-teal-800'}`}>
+              {connectedPlatforms.length} platforms synced — insights updated live
+            </p>
+            <p className={`text-xs mt-0.5 truncate ${darkMode ? 'text-teal-400' : 'text-teal-600'}`}>
+              {connectedPlatforms.join(' · ')}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[...Array(Math.min(connectedPlatforms.length, 6))].map((_, i) => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-teal-400"
+                style={{ animation: `pulse 1.4s ease ${i * 0.18}s infinite` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Insights Section — live computed from real notification data */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {SAMPLE_INSIGHTS.map((insight, idx) => (
-          <div key={idx} className="bg-white rounded-2xl p-4 border border-slate-200 hover:border-slate-300 transition-all">
+        {dynamicInsights.map((insight, idx) => (
+          <div
+            key={idx}
+            className={`rounded-2xl p-4 border transition-all hover:shadow-md ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+            style={{ animation: `fadeSlideIn ${0.25 + idx * 0.07}s cubic-bezier(.16,1,.3,1) both` }}
+          >
             <div className="flex justify-between items-start">
               <span className="text-2xl">{insight.icon}</span>
-              <span className={`text-xs font-bold px-2 py-1 rounded-lg ${insight.trend.startsWith('+') ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+              <span className={`text-xs font-bold px-2 py-1 rounded-lg ${
+                insight.up
+                  ? (darkMode ? 'bg-emerald-900 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
+                  : (darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-100 text-slate-600')
+              }`}>
                 {insight.trend}
               </span>
             </div>
-            <p className="text-slate-500 text-xs mt-3 uppercase font-semibold">{insight.label}</p>
-            <p className="text-2xl font-bold mt-1">{insight.value}</p>
+            <p className={`text-xs mt-3 uppercase font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{insight.label}</p>
+            <p className={`text-2xl font-bold mt-1 ${darkMode ? 'text-white' : 'text-slate-900'}`}>{insight.value}</p>
           </div>
         ))}
       </div>
@@ -430,6 +559,78 @@ const App = () => {
           </button>
         ))}
       </div>
+
+      {/* ── Live Platform Feed — shows when any non-Canvas platform is connected */}
+      {connectedPlatforms.filter(p => p !== 'Canvas LMS').length > 0 && (() => {
+        const SOURCE_COLORS = {
+          'Email (Gmail)': '#EA4335', 'Slack': '#4A154B', 'WhatsApp': '#25D366',
+          'Trello': '#0052CC', 'Google Calendar': '#1A73E8',
+        };
+        const platformItems = notifications.filter(n =>
+          connectedPlatforms.some(p => {
+            if (p === 'Gmail' && n.source && n.source.includes('Gmail')) return true;
+            if (p === 'Slack' && n.source === 'Slack') return true;
+            if (p === 'WhatsApp' && n.source === 'WhatsApp') return true;
+            if (p === 'Trello' && n.source === 'Trello') return true;
+            if (p === 'Google Calendar' && n.source === 'Google Calendar') return true;
+            return false;
+          })
+        ).slice(0, 4);
+        if (platformItems.length === 0) return null;
+        return (
+          <div className={`rounded-2xl border overflow-hidden ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}
+            style={{ animation: 'fadeSlideIn .35s cubic-bezier(.16,1,.3,1)' }}>
+            <div className={`px-5 py-3 flex items-center justify-between border-b ${darkMode ? 'border-slate-700 bg-slate-750' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-teal-500" style={{ animation: 'pulse 1.4s ease infinite' }}/>
+                <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>Live from Connected Platforms</span>
+              </div>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${darkMode ? 'bg-teal-900 text-teal-300' : 'bg-teal-100 text-teal-700'}`}>
+                {platformItems.length} new
+              </span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {platformItems.map((item, i) => {
+                const srcColor = SOURCE_COLORS[item.source] || '#6B7280';
+                const urgency = (() => {
+                  const h = (new Date(item.deadline) - new Date()) / 3600000;
+                  if (h <= 24) return { dot: 'bg-red-500', text: 'text-red-600', label: 'Critical' };
+                  if (h <= 72) return { dot: 'bg-amber-500', text: 'text-amber-600', label: 'Urgent' };
+                  return { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'On track' };
+                })();
+                return (
+                  <div key={item.id}
+                    className={`flex items-start gap-4 px-5 py-4 cursor-pointer transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}
+                    onClick={() => setSelectedNotification(item)}
+                    style={{ animation: `fadeSlideIn ${.1 + i * .07}s cubic-bezier(.16,1,.3,1) both` }}
+                  >
+                    <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-bold mt-0.5"
+                      style={{ background: srcColor }}>
+                      {item.source.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className="text-xs font-bold" style={{ color: srcColor }}>{item.source}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-wide ${urgency.text}`}>{urgency.label}</span>
+                      </div>
+                      <p className={`text-sm font-semibold truncate ${darkMode ? 'text-white' : 'text-slate-900'}`}>{item.title}</p>
+                      <p className={`text-xs mt-0.5 truncate ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{item.course}</p>
+                    </div>
+                    <div className={`flex-shrink-0 text-xs font-bold px-2 py-1 rounded-lg ${darkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
+                      {(() => {
+                        const h = Math.round((new Date(item.deadline) - new Date()) / 3600000);
+                        if (h < 0) return 'Overdue';
+                        if (h < 24) return h + 'h';
+                        return Math.floor(h/24) + 'd';
+                      })()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Enhanced Task Cards */}
       <div className="space-y-4">
@@ -1088,19 +1289,44 @@ const App = () => {
           ))}
         </nav>
 
-        <div className={`m-4 p-4 rounded-2xl ${darkMode ? 'bg-slate-700' : 'bg-teal-50'} border ${darkMode ? 'border-slate-600' : 'border-teal-200'}`}>
-          <p className={`text-xs font-semibold uppercase mb-3 ${darkMode ? 'text-slate-400' : 'text-teal-800'}`}>Connected Services</p>
-          <div className="flex -space-x-2">
-            {[
-              { name: 'Canvas', bg: 'bg-blue-500' },
-              { name: 'Gmail', bg: 'bg-red-500' },
-              { name: 'WhatsApp', bg: 'bg-green-500' }
-            ].map(service => (
-              <div key={service.name} className={`w-8 h-8 rounded-full border-2 ${darkMode ? 'border-slate-700' : 'border-white'} flex items-center justify-center text-white text-[10px] font-bold ${service.bg}`}>
-                {service.name.charAt(0)}
-              </div>
-            ))}
+        {/* Connected Services — live from state */}
+        <div
+          className={`m-4 p-4 rounded-2xl border transition-all ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-teal-50 border-teal-200'}`}
+          onClick={() => setShowIntegrations(true)}
+          style={{ cursor: 'pointer' }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <p className={`text-xs font-semibold uppercase ${darkMode ? 'text-slate-400' : 'text-teal-800'}`}>Connected</p>
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${darkMode ? 'bg-teal-800 text-teal-300' : 'bg-teal-200 text-teal-800'}`}>
+              {connectedPlatforms.length}/6
+            </span>
           </div>
+          {connectedPlatforms.length === 0 ? (
+            <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>No platforms connected</p>
+          ) : (
+            <div className="flex -space-x-2 flex-wrap gap-y-1">
+              {connectedPlatforms.map((name) => {
+                const colors = {
+                  'Canvas LMS': '#E66000', 'Gmail': '#EA4335', 'WhatsApp': '#25D366',
+                  'Slack': '#4A154B', 'Trello': '#0052CC', 'Google Calendar': '#1A73E8'
+                };
+                const bg = colors[name] || '#6B7280';
+                return (
+                  <div
+                    key={name}
+                    title={name}
+                    style={{ background: bg }}
+                    className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ${darkMode ? 'border-slate-700' : 'border-white'}`}
+                  >
+                    {name.charAt(0)}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <p className={`text-[10px] mt-2 font-medium ${darkMode ? 'text-slate-500' : 'text-teal-600'}`}>
+            Click to manage integrations
+          </p>
         </div>
 
         <div className={`p-4 border-t ${darkMode ? 'border-slate-700' : 'border-slate-100'} space-y-2`}>
@@ -1150,80 +1376,252 @@ const App = () => {
         {activeView === 'settings' && <SettingsView darkMode={darkMode} setDarkMode={setDarkMode} />}
       </main>
 
-      {/* Integrations Modal */}
-      {showIntegrations && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in">
-          <div className={`rounded-3xl w-full max-w-2xl p-8 shadow-2xl animate-in zoom-in duration-300 ${darkMode ? 'bg-slate-800' : 'bg-white'}`}>
-            <div className="flex justify-between items-center mb-8">
-              <div>
-                <h3 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Connect & Integrate</h3>
-                <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Link your academic platforms for seamless synchronization</p>
-              </div>
-              <button onClick={() => setShowIntegrations(false)} className={`p-2 rounded-lg transition-all ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-                <X size={24} className={darkMode ? 'text-slate-400' : 'text-slate-600'} />
-              </button>
-            </div>
+      {/* ── INTEGRATIONS MODAL ──────────────────────────────────────────── */}
+      {showIntegrations && (() => {
+        const PLATFORM_DEFS = [
+          {
+            name: 'Canvas LMS',
+            desc: 'Assignments, quizzes & grades',
+            color: '#E66000',
+            notifCount: 3,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#E66000"/>
+                <text x="20" y="27" textAnchor="middle" fontSize="18" fontWeight="800" fill="white" fontFamily="serif">C</text>
+              </svg>
+            ),
+          },
+          {
+            name: 'Gmail',
+            desc: 'Professor emails & alerts',
+            color: '#EA4335',
+            notifCount: 2,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#fff" stroke="#e5e7eb" strokeWidth="1.5"/>
+                <path d="M8 14l12 9 12-9" stroke="#EA4335" strokeWidth="2" fill="none"/>
+                <path d="M8 14h24v16H8z" fill="none" stroke="#e5e7eb" strokeWidth="1.5"/>
+                <path d="M8 14l12 9 12-9V30H8z" fill="none"/>
+                <path d="M8 14l12 9 12-9" stroke="#EA4335" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
+              </svg>
+            ),
+          },
+          {
+            name: 'WhatsApp',
+            desc: 'Class group announcements',
+            color: '#25D366',
+            notifCount: 1,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#25D366"/>
+                <path d="M20 9C13.9 9 9 13.9 9 20c0 1.9.5 3.8 1.5 5.4L9 31l5.8-1.5A11 11 0 1020 9zm0 20a9 9 0 01-4.6-1.3l-.3-.2-3.5.9.9-3.4-.2-.3A9 9 0 1120 29zm4.9-6.7c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.2-.7.8-.8 1-.2.2-.3.2-.6.1-.3-.1-1.2-.4-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6l.4-.5.2-.4v-.4l-.7-1.8c-.2-.4-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.2-.9.9-.9 2.1s.9 2.4 1 2.6c.1.2 1.8 2.7 4.3 3.8.6.3 1.1.4 1.5.5.6.2 1.2.1 1.6-.1.5-.2 1.5-.6 1.7-1.2.2-.6.2-1 .1-1.1-.1-.1-.2-.2-.5-.3z" fill="white"/>
+              </svg>
+            ),
+          },
+          {
+            name: 'Slack',
+            desc: 'TA channels & study groups',
+            color: '#4A154B',
+            notifCount: 2,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#4A154B"/>
+                <g transform="translate(8,8) scale(0.6)">
+                  <path d="M10 24a4 4 0 01-4-4 4 4 0 014-4h4v4a4 4 0 01-4 4z" fill="#36C5F0"/>
+                  <path d="M24 10a4 4 0 01-4 4v-4a4 4 0 014-4 4 4 0 014 4 4 4 0 01-4 4z" fill="#2EB67D"/>
+                  <path d="M30 24a4 4 0 014 4 4 4 0 01-4 4 4 4 0 01-4-4v-4z" fill="#ECB22E"/>
+                  <path d="M16 30a4 4 0 014-4v4a4 4 0 01-4 4 4 4 0 01-4-4 4 4 0 014-4z" fill="#E01E5A"/>
+                </g>
+              </svg>
+            ),
+          },
+          {
+            name: 'Trello',
+            desc: 'Project boards & tasks',
+            color: '#0052CC',
+            notifCount: 1,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#0052CC"/>
+                <rect x="10" y="11" width="8" height="13" rx="2" fill="white"/>
+                <rect x="22" y="11" width="8" height="9" rx="2" fill="white"/>
+              </svg>
+            ),
+          },
+          {
+            name: 'Google Calendar',
+            desc: 'Deadlines & exam schedule',
+            color: '#1A73E8',
+            notifCount: 1,
+            logo: (
+              <svg viewBox="0 0 40 40" width="36" height="36">
+                <rect width="40" height="40" rx="9" fill="#fff" stroke="#e5e7eb" strokeWidth="1.5"/>
+                <rect x="8" y="10" width="24" height="22" rx="3" fill="none" stroke="#1A73E8" strokeWidth="1.8"/>
+                <line x1="8" y1="16" x2="32" y2="16" stroke="#1A73E8" strokeWidth="1.8"/>
+                <line x1="15" y1="7" x2="15" y2="13" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round"/>
+                <line x1="25" y1="7" x2="25" y2="13" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round"/>
+                <text x="20" y="28" textAnchor="middle" fontSize="10" fontWeight="700" fill="#1A73E8" fontFamily="sans-serif">17</text>
+              </svg>
+            ),
+          },
+        ];
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { name: "Canvas LMS", icon: "🎓" },
-                { name: "Gmail", icon: "📧" },
-                { name: "WhatsApp", icon: "💬" },
-                { name: "Slack", icon: "💼" },
-                { name: "Trello", icon: "📋" },
-                { name: "Google Calendar", icon: "📅" },
-              ].map(platform => {
-                const isConnected = connectedPlatforms.includes(platform.name);
-                const message = integrationMessages[platform.name];
-                return (
-                  <div key={platform.name} className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                    isConnected
-                      ? `border-emerald-200 ${darkMode ? 'bg-slate-700' : 'bg-emerald-50'}`
-                      : `border-slate-200 ${darkMode ? 'bg-slate-700 hover:border-slate-300' : 'bg-white hover:border-slate-300'}`
-                  }`} onClick={() => handleConnect(platform.name)}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-3xl">{platform.icon}</span>
-                        <div>
-                          <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{platform.name}</p>
-                          <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                            {isConnected ? 'Click to disconnect' : 'Click to connect'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleConnect(platform.name);
-                        }}
-                        className={`text-xs font-bold px-3 py-1 rounded-lg transition-colors ${
-                          isConnected
-                            ? 'bg-emerald-200 text-emerald-700 hover:bg-emerald-300'
-                            : darkMode ? 'bg-slate-600 text-slate-300 hover:bg-slate-500' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-                        }`}
-                      >
-                        {isConnected ? 'Connected' : 'Connect'}
-                      </button>
-                    </div>
-                    {message && <p className="text-xs text-emerald-600 mt-2 font-semibold">{message}</p>}
+        const fmtTime = (iso) => {
+          if (!iso) return null;
+          const d = new Date(iso);
+          const diff = Math.floor((Date.now() - d.getTime()) / 60000);
+          if (diff < 1) return 'just now';
+          if (diff < 60) return `${diff}m ago`;
+          const h = Math.floor(diff / 60);
+          if (h < 24) return `${h}h ago`;
+          return `${Math.floor(h/24)}d ago`;
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div
+              className={`rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-white'}`}
+              style={{ animation: 'intModalIn .25s cubic-bezier(.16,1,.3,1)' }}
+            >
+              <style>{`
+                @keyframes intModalIn { from{opacity:0;transform:scale(.95) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
+                @keyframes intSpin { to{transform:rotate(360deg)} }
+                .int-spin { animation:intSpin .7s linear infinite }
+                @keyframes intSlideIn { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+                .int-slide { animation:intSlideIn .2s ease both }
+              `}</style>
+
+              {/* Header */}
+              <div className={`px-7 pt-7 pb-5 border-b ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Connect & Integrate</h3>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Link your academic platforms for seamless synchronization
+                    </p>
                   </div>
-                );
-              })}
-            </div>
+                  <button
+                    onClick={() => setShowIntegrations(false)}
+                    className={`p-2 rounded-xl transition-all ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
+                  >
+                    <X size={20}/>
+                  </button>
+                </div>
 
-            <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-xl flex gap-3">
-              <Lightbulb size={20} className="text-blue-600 flex-shrink-0" />
-              <p className="text-sm text-blue-700">
-                <strong>Pro Tip:</strong> Connect multiple platforms to get comprehensive notifications in one place. Your data is encrypted and secure.
-              </p>
-            </div>
+                {/* Connected count bar */}
+                <div className="flex items-center gap-3 mt-4">
+                  <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-500"
+                      style={{ width: `${(connectedPlatforms.length / PLATFORM_DEFS.length) * 100}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs font-bold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {connectedPlatforms.length}/{PLATFORM_DEFS.length} connected
+                  </span>
+                </div>
+              </div>
 
-            <button onClick={() => setShowIntegrations(false)} className="w-full mt-8 px-6 py-3 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl font-bold hover:shadow-lg transition-all">
-              Done
-            </button>
+              {/* Platform grid */}
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto">
+                {PLATFORM_DEFS.map(platform => {
+                  const isConnected = connectedPlatforms.includes(platform.name);
+                  const isConnecting = connectingPlatform === platform.name;
+                  const meta = platformMeta[platform.name];
+                  const stepLabel = isConnecting ? CONNECT_STEPS[connectStep - 1]?.label : null;
+
+                  return (
+                    <div
+                      key={platform.name}
+                      className={`relative rounded-2xl border-2 p-4 transition-all duration-200 ${
+                        isConnecting
+                          ? `border-blue-300 ${darkMode ? 'bg-blue-950/30' : 'bg-blue-50'}`
+                          : isConnected
+                          ? `border-emerald-200 ${darkMode ? 'bg-emerald-950/20' : 'bg-emerald-50/60'}`
+                          : `${darkMode ? 'border-slate-700 bg-slate-700/40 hover:border-slate-500' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'}`
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* Logo */}
+                        <div className="relative flex-shrink-0">
+                          {platform.logo}
+                          {isConnected && !isConnecting && (
+                            <span className="absolute -bottom-1 -right-1 bg-emerald-500 rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
+                              <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1.5 4L3.2 5.7 6.5 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+                            </span>
+                          )}
+                          {isConnecting && (
+                            <span className="absolute -bottom-1 -right-1 bg-blue-500 rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
+                              <div className="int-spin w-2.5 h-2.5 border border-white/30 border-t-white rounded-full"/>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Text */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{platform.name}</p>
+                            {isConnected && !isConnecting && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 uppercase tracking-wide">Live</span>
+                            )}
+                          </div>
+                          {isConnecting ? (
+                            <p className="text-xs text-blue-500 font-medium int-slide">{stepLabel}</p>
+                          ) : isConnected && meta?.syncedAt ? (
+                            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-400'}`}>
+                              Synced {fmtTime(meta.syncedAt)} · {platform.notifCount} item{platform.notifCount !== 1 ? 's' : ''}
+                            </p>
+                          ) : (
+                            <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{platform.desc}</p>
+                          )}
+                        </div>
+
+                        {/* Action button */}
+                        <button
+                          disabled={!!connectingPlatform}
+                          onClick={(e) => { e.stopPropagation(); handleConnect(platform.name); }}
+                          className={`text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isConnecting
+                              ? 'bg-blue-100 text-blue-600 cursor-wait'
+                              : isConnected
+                              ? `${darkMode ? 'bg-emerald-800 text-emerald-300 hover:bg-red-900 hover:text-red-300' : 'bg-emerald-100 text-emerald-700 hover:bg-red-50 hover:text-red-600'} group`
+                              : `${darkMode ? 'bg-slate-600 text-slate-200 hover:bg-teal-700 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-teal-600 hover:text-white'}`
+                          }`}
+                        >
+                          {isConnecting ? 'Connecting...' : isConnected ? 'Connected ✓' : 'Connect'}
+                        </button>
+                      </div>
+
+                      {/* Disconnect hint on hover — shown as subtext when connected */}
+                      {isConnected && !isConnecting && (
+                        <p className={`text-[10px] mt-2.5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Click "Connected" to disconnect and remove synced data
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div className={`px-6 pb-6 pt-1`}>
+                <div className={`p-3.5 rounded-xl flex gap-3 items-start mb-4 ${darkMode ? 'bg-blue-950/40 border border-blue-800' : 'bg-blue-50 border border-blue-100'}`}>
+                  <Lightbulb size={16} className="text-blue-500 flex-shrink-0 mt-0.5"/>
+                  <p className={`text-xs leading-relaxed ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>
+                    <strong>How it works:</strong> Connecting a platform syncs its notifications directly into your feed and persists across sessions. Disconnect any time to remove its data.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowIntegrations(false)}
+                  className="w-full py-3 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl font-bold hover:shadow-lg hover:from-teal-500 hover:to-teal-600 transition-all active:scale-[.99]"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
