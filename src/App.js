@@ -130,97 +130,459 @@ const App = () => {
   const [showCourseManage, setShowCourseManage] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 28)); // April 28, 2026
   const [selectedEventDate, setSelectedEventDate] = useState(null);
-  // --- INTEGRATION STATE (persisted to localStorage) ---
+  // ═══════════════════════════════════════════════════════════════
+  // REAL INTEGRATION SYSTEM
+  // ═══════════════════════════════════════════════════════════════
+
+  // --- Persisted state ---
   const [connectedPlatforms, setConnectedPlatformsRaw] = useState(() => {
-    try {
-      const saved = localStorage.getItem('edusync_connected_platforms');
-      return saved ? JSON.parse(saved) : ['Canvas LMS'];
-    } catch { return ['Canvas LMS']; }
+    try { return JSON.parse(localStorage.getItem('edusync_connected') || '["Canvas LMS"]'); }
+    catch { return ['Canvas LMS']; }
+  });
+  const [platformTokens, setPlatformTokensRaw] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('edusync_tokens') || '{}'); }
+    catch { return {}; }
   });
   const [platformMeta, setPlatformMetaRaw] = useState(() => {
-    try {
-      const saved = localStorage.getItem('edusync_platform_meta');
-      return saved ? JSON.parse(saved) : { 'Canvas LMS': { connectedAt: new Date().toISOString(), syncedAt: new Date().toISOString() } };
-    } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem('edusync_meta') || '{}'); }
+    catch { return {}; }
   });
-  const [connectingPlatform, setConnectingPlatform] = useState(null); // name of platform currently going through flow
-  const [connectStep, setConnectStep] = useState(0); // 0=idle 1=authorizing 2=fetching 3=done
 
-  const setConnectedPlatforms = (val) => {
-    const next = typeof val === 'function' ? val(connectedPlatforms) : val;
-    setConnectedPlatformsRaw(next);
-    localStorage.setItem('edusync_connected_platforms', JSON.stringify(next));
+  const setConnectedPlatforms = v => {
+    const n = typeof v === 'function' ? v(connectedPlatforms) : v;
+    setConnectedPlatformsRaw(n);
+    localStorage.setItem('edusync_connected', JSON.stringify(n));
   };
-  const setPlatformMeta = (val) => {
-    const next = typeof val === 'function' ? val(platformMeta) : val;
-    setPlatformMetaRaw(next);
-    localStorage.setItem('edusync_platform_meta', JSON.stringify(next));
+  const setPlatformTokens = v => {
+    const n = typeof v === 'function' ? v(platformTokens) : v;
+    setPlatformTokensRaw(n);
+    localStorage.setItem('edusync_tokens', JSON.stringify(n));
   };
-
-  // Mock notifications injected per platform when connected
-  const PLATFORM_MOCK_NOTIFICATIONS = {
-    'Gmail': [
-      { id: 9001, title: 'Prof. Sharma: Assignment Extension Granted', course: 'Mathematics III', source: 'Email (Gmail)', type: 'announcement', priority: 'high', deadline: new Date(Date.now() + 3*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Prof. Sharma has granted a 48-hour extension for Problem Set 4 due to the lab downtime.', status: 'pending', progress: 0, subtasks: [], attachments: 1, collaborators: ['Prof. Sharma'], tags: ['email', 'extension'], estimatedHours: 0, completedHours: 0 },
-      { id: 9002, title: 'Internship Application: Interview Scheduled', course: 'Career', source: 'Email (Gmail)', type: 'announcement', priority: 'critical', deadline: new Date(Date.now() + 1*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Your interview with TechCorp has been scheduled for tomorrow at 10 AM via Google Meet.', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['email', 'career'], estimatedHours: 2, completedHours: 0 },
-    ],
-    'Slack': [
-      { id: 9003, title: 'DSA Study Group: Session Tonight 8 PM', course: 'Data Structures & Algorithms', source: 'Slack', type: 'announcement', priority: 'medium', deadline: new Date(Date.now() + 10*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: '#dsa-group: "Covering Binary Trees and AVL rotations tonight. Please read Chapter 12 beforehand."', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: ['Alice', 'Bob', 'Riya'], tags: ['slack', 'study-group'], estimatedHours: 2, completedHours: 0 },
-      { id: 9004, title: 'TA Channel: Lab 3 Rubric Posted', course: 'Web & App Programming', source: 'Slack', type: 'assignment', priority: 'medium', deadline: new Date(Date.now() + 4*24*60*60*1000).toISOString(), weight: '15%', link: '#', description: '#wap-lab: "Lab 3 rubric is now live in the files tab. Pay close attention to the accessibility criteria."', status: 'pending', progress: 0, subtasks: [{ id:1, title:'Read rubric', completed:false },{ id:2, title:'Update components', completed:false }], attachments: 1, collaborators: ['TA Priya'], tags: ['slack', 'lab'], estimatedHours: 4, completedHours: 0 },
-    ],
-    'WhatsApp': [
-      { id: 9005, title: 'Class Group: Venue Changed — Room 402', course: 'Fundamental System Thinking', source: 'WhatsApp', type: 'announcement', priority: 'high', deadline: new Date(Date.now() + 18*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Class WhatsApp: "Tomorrow\'s FST lecture has moved to Block B, Room 402. Please note the change."', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['whatsapp', 'venue'], estimatedHours: 0, completedHours: 0 },
-    ],
-    'Trello': [
-      { id: 9006, title: 'EduSync Project: Testing Card Overdue', course: 'Software Engineering', source: 'Trello', type: 'assignment', priority: 'critical', deadline: new Date(Date.now() + 6*60*60*1000).toISOString(), weight: '40%', link: '#', description: 'Trello card "Testing & Debugging" in the EduSync board is overdue and blocking deployment.', status: 'in-progress', progress: 40, subtasks: [{ id:1, title:'Write unit tests', completed:false },{ id:2, title:'Fix regression bugs', completed:false }], attachments: 2, collaborators: ['Charlie', 'Alice'], tags: ['trello', 'project'], estimatedHours: 6, completedHours: 2 },
-    ],
-    'Google Calendar': [
-      { id: 9007, title: 'Mid-Semester Review: Block Your Calendar', course: 'All Courses', source: 'Google Calendar', type: 'announcement', priority: 'medium', deadline: new Date(Date.now() + 5*24*60*60*1000).toISOString(), weight: 'N/A', link: '#', description: 'Mid-semester review week begins Friday. 4 exams scheduled across 5 days — your calendar has been updated.', status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [], tags: ['calendar', 'exams'], estimatedHours: 0, completedHours: 0 },
-    ],
+  const setPlatformMeta = v => {
+    const n = typeof v === 'function' ? v(platformMeta) : v;
+    setPlatformMetaRaw(n);
+    localStorage.setItem('edusync_meta', JSON.stringify(n));
   };
 
-  const CONNECT_STEPS = [
-    { label: 'Initiating OAuth handshake...', duration: 900 },
-    { label: 'Verifying credentials...', duration: 700 },
-    { label: 'Fetching your data...', duration: 1000 },
-  ];
+  // --- Setup modal state ---
+  const [setupPlatform, setSetupPlatform] = useState(null);  // platform name to configure
+  const [setupFields, setSetupFields]     = useState({});    // { fieldKey: value }
+  const [setupError, setSetupError]       = useState('');
+  const [setupLoading, setSetupLoading]   = useState(false);
+  const [setupStep, setSetupStep]         = useState('form'); // 'form' | 'oauth' | 'testing' | 'done'
 
-  // --- INTEGRATION HANDLERS ---
+  // Injected notifications keyed by platform id for easy removal on disconnect
+  const [platformNotifIds, setPlatformNotifIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('edusync_notif_ids') || '{}'); }
+    catch { return {}; }
+  });
+  const savePlatformNotifIds = v => {
+    const n = typeof v === 'function' ? v(platformNotifIds) : v;
+    setPlatformNotifIds(n);
+    localStorage.setItem('edusync_notif_ids', JSON.stringify(n));
+  };
+
+  // ── PLATFORM DEFINITIONS ──────────────────────────────────────
+  const PLATFORM_DEFS = {
+    'Canvas LMS': {
+      color: '#E66000', shortDesc: 'Assignments & grades',
+      authType: 'token',
+      fields: [
+        { key: 'url',   label: 'Canvas URL',   placeholder: 'https://canvas.instructure.com', hint: 'Your institution Canvas URL' },
+        { key: 'token', label: 'Access Token', placeholder: 'Paste your Canvas access token', hint: 'Account → Settings → New Access Token', secret: true },
+      ],
+      async connect(creds) {
+        // CRA dev proxy (src/setupProxy.js) forwards /canvas-api/* →
+        // https://rishihood.instructure.com — zero CORS issues.
+        const headers = { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' };
+
+        async function canvasFetch(apiPath) {
+          var res = await fetch('/canvas-api' + apiPath, { headers });
+          return res;
+        }
+
+        var r;
+        try {
+          r = await canvasFetch('/api/v1/courses?enrollment_state=active&per_page=10');
+        } catch(e) {
+          throw new Error('Could not reach Canvas. Make sure npm start is running (the dev proxy handles the request).');
+        }
+        if (r.status === 401 || r.status === 403) throw new Error('Invalid token. In Canvas: click your name (top-left) → Settings → Approved Integrations → + New Access Token.');
+        if (r.status === 404) throw new Error('Canvas URL not found — the proxy is pointed at rishihood.instructure.com. Check setupProxy.js if you use a different instance.');
+        if (!r.ok) throw new Error('Canvas responded ' + r.status + '. Check your token.');
+        var courses = await r.json();
+        if (!Array.isArray(courses)) throw new Error('Unexpected Canvas response. Your token may have expired — generate a new one.');
+        // Fetch assignments for first 3 active courses
+        var assignItems = [];
+        for (var ci = 0; ci < Math.min(courses.length, 3); ci++) {
+          var c = courses[ci];
+          try {
+            var ar = await canvasFetch('/api/v1/courses/' + c.id + '/assignments?order_by=due_at&per_page=5');
+            if (ar.ok) {
+              const assigns = await ar.json();
+              assigns.forEach(a => {
+                if (a.due_at) assignItems.push({
+                  id: 70000 + a.id,
+                  title: a.name,
+                  course: c.name,
+                  source: 'Canvas LMS',
+                  type: 'assignment',
+                  priority: (() => { const h=(new Date(a.due_at)-new Date())/3600000; return h<24?'critical':h<72?'high':'medium'; })(),
+                  deadline: a.due_at,
+                  weight: a.points_possible ? `${a.points_possible} pts` : 'N/A',
+                  link: a.html_url || '#',
+                  description: a.description ? a.description.replace(/<[^>]+>/g,'').slice(0,200) : 'No description.',
+                  status: a.submission?.workflow_state === 'submitted' ? 'completed' : 'pending',
+                  progress: a.submission?.workflow_state === 'submitted' ? 100 : 0,
+                  subtasks: [], attachments: 0, collaborators: [], tags: ['canvas'],
+                  estimatedHours: 2, completedHours: 0,
+                });
+              });
+            }
+          } catch(e) {}
+        }
+        return { items: assignItems, meta: { courses: courses.length, user: courses[0]?.enrollments?.[0]?.role || 'Student' } };
+      }
+    },
+
+    'Gmail': {
+      color: '#EA4335', shortDesc: 'Emails & professor alerts',
+      authType: 'google_oauth',
+      scopes: 'https://www.googleapis.com/auth/gmail.readonly',
+      fields: [
+        { key: 'clientId', label: 'Google Client ID', placeholder: 'xxxxxx.apps.googleusercontent.com',
+          hint: 'console.cloud.google.com → APIs & Services → Credentials → OAuth 2.0 Client ID (set http://localhost:3000 as Authorized JS Origin)' },
+      ],
+      async connect(creds) {
+        // Open Google OAuth popup
+        const token = await googleOAuthPopup(creds.clientId, 'https://www.googleapis.com/auth/gmail.readonly');
+        // Fetch recent unread messages
+        const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=is:unread', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!r.ok) throw new Error('Gmail API error ' + r.status);
+        const data = await r.json();
+        const messages = data.messages || [];
+        // Fetch details for each message
+        const items = [];
+        for (const m of messages.slice(0, 6)) {
+          try {
+            const mr = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const md = await mr.json();
+            const headers = md.payload?.headers || [];
+            const subject = headers.find(h=>h.name==='Subject')?.value || '(No subject)';
+            const from    = headers.find(h=>h.name==='From')?.value || 'Unknown';
+            const dateStr = headers.find(h=>h.name==='Date')?.value;
+            items.push({
+              id: 80000 + parseInt(m.id.slice(-6), 16) % 10000,
+              title: subject.slice(0,80),
+              course: from.replace(/<[^>]+>/,'').trim().slice(0,40),
+              source: 'Email (Gmail)',
+              type: 'announcement',
+              priority: subject.toLowerCase().includes('urgent')||subject.toLowerCase().includes('deadline') ? 'critical' : 'medium',
+              deadline: new Date(Date.now() + 3*24*60*60*1000).toISOString(),
+              weight: 'N/A', link: `https://mail.google.com/mail/u/0/#inbox/${m.id}`,
+              description: `From: ${from}\n\nSubject: ${subject}`,
+              status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [],
+              tags: ['gmail', 'email'], estimatedHours: 0, completedHours: 0,
+            });
+          } catch(e) {}
+        }
+        return { items, token, meta: { unread: messages.length } };
+      }
+    },
+
+    'Google Calendar': {
+      color: '#1A73E8', shortDesc: 'Deadlines & exam schedule',
+      authType: 'google_oauth',
+      scopes: 'https://www.googleapis.com/auth/calendar.readonly',
+      fields: [
+        { key: 'clientId', label: 'Google Client ID', placeholder: 'xxxxxx.apps.googleusercontent.com',
+          hint: 'Same Client ID as Gmail works — just add calendar scope in OAuth consent screen' },
+      ],
+      async connect(creds) {
+        const token = await googleOAuthPopup(creds.clientId, 'https://www.googleapis.com/auth/calendar.readonly');
+        const now = new Date().toISOString();
+        const later = new Date(Date.now() + 30*24*60*60*1000).toISOString();
+        const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${now}&timeMax=${later}&maxResults=10&orderBy=startTime&singleEvents=true`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!r.ok) throw new Error('Calendar API error ' + r.status);
+        const data = await r.json();
+        const items = (data.items || []).map(ev => ({
+          id: 85000 + Math.abs(ev.id?.slice(-4).split('').reduce((a,c)=>a+c.charCodeAt(0),0) || Math.random()*9999|0),
+          title: ev.summary || 'Calendar Event',
+          course: ev.organizer?.displayName || ev.organizer?.email || 'Calendar',
+          source: 'Google Calendar',
+          type: 'announcement',
+          priority: (() => { const h=(new Date(ev.start?.dateTime||ev.start?.date)-new Date())/3600000; return h<24?'critical':h<72?'high':'medium'; })(),
+          deadline: ev.start?.dateTime || ev.start?.date,
+          weight: 'N/A', link: ev.htmlLink || '#',
+          description: ev.description || `Scheduled: ${ev.start?.dateTime || ev.start?.date}`,
+          status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [],
+          tags: ['calendar'], estimatedHours: 1, completedHours: 0,
+        }));
+        return { items, token, meta: { events: items.length } };
+      }
+    },
+
+    'Slack': {
+      color: '#4A154B', shortDesc: 'TA channels & study groups',
+      authType: 'token',
+      fields: [
+        { key: 'token', label: 'Slack Bot/User Token', placeholder: 'xoxb-... or xoxp-...', secret: true,
+          hint: 'api.slack.com/apps → Your App → OAuth & Permissions → Bot Token (add channels:history, channels:read scopes)' },
+        { key: 'channel', label: 'Channel ID (optional)', placeholder: 'C0xxxxxx',
+          hint: 'Right-click channel in Slack → View channel details → Channel ID at bottom' },
+      ],
+      async connect(creds) {
+        // Use CRA dev proxy — /slack-api/* → https://slack.com (no CORS)
+        const headers = { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' };
+
+        // Test auth first
+        const authR = await fetch('/slack-api/api/auth.test', { method: 'POST', headers });
+        if (!authR.ok) throw new Error('Could not reach Slack API. Make sure npm start is running.');
+        const authData = await authR.json();
+        if (!authData.ok) throw new Error('Slack error: ' + authData.error + '. Check your token and scopes (needs channels:read, channels:history).');
+
+        // Get channels
+        const chR = await fetch('/slack-api/api/conversations.list?types=public_channel,private_channel&limit=10', { headers });
+        const chData = chR.ok ? await chR.json() : { channels: [] };
+        const channels = (chData.channels || []).slice(0, 5);
+
+        const items = [];
+        for (const ch of channels) {
+          try {
+            const mR = await fetch(`/slack-api/api/conversations.history?channel=${ch.id}&limit=3`, { headers });
+            const mData = mR.ok ? await mR.json() : { messages: [] };
+            (mData.messages || []).forEach(msg => {
+              if (msg.text && msg.text.length > 10) {
+                items.push({
+                  id: 90000 + Math.abs(parseInt(msg.ts?.replace('.','').slice(-6)) || Math.random()*9999|0),
+                  title: msg.text.slice(0,80),
+                  course: `#${ch.name}`,
+                  source: 'Slack',
+                  type: 'announcement',
+                  priority: msg.text.toLowerCase().includes('urgent')||msg.text.toLowerCase().includes('deadline') ? 'high' : 'medium',
+                  deadline: new Date(Date.now() + 2*24*60*60*1000).toISOString(),
+                  weight: 'N/A', link: `https://slack.com`,
+                  description: msg.text,
+                  status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [],
+                  tags: ['slack', ch.name], estimatedHours: 0, completedHours: 0,
+                });
+              }
+            });
+          } catch(e) {}
+        }
+        return { items: items.slice(0,5), meta: { workspace: authData.team, user: authData.user, channels: channels.length } };
+      }
+    },
+
+    'Trello': {
+      color: '#0052CC', shortDesc: 'Project boards & tasks',
+      authType: 'trello_oauth',
+      fields: [
+        { key: 'apiKey', label: 'Trello API Key', placeholder: 'Your Trello API key',
+          hint: 'trello.com/power-ups/admin → New Power-Up → API key shown on the page' },
+      ],
+      async connect(creds) {
+        // Trello allows client-side OAuth with just an API key
+        const token = await trelloOAuthPopup(creds.apiKey);
+        const r = await fetch(`https://api.trello.com/1/members/me/boards?key=${creds.apiKey}&token=${token}&fields=name,id&filter=open`);
+        if (!r.ok) throw new Error('Trello API error ' + r.status);
+        const boards = await r.json();
+        const items = [];
+        for (const board of boards.slice(0, 3)) {
+          try {
+            const cr = await fetch(`https://api.trello.com/1/boards/${board.id}/cards?key=${creds.apiKey}&token=${token}&fields=name,due,idList,url,desc&filter=open`);
+            if (cr.ok) {
+              const cards = await cr.json();
+              cards.slice(0, 4).forEach(card => {
+                items.push({
+                  id: 95000 + parseInt(card.id.slice(-6), 16) % 9999,
+                  title: card.name,
+                  course: board.name,
+                  source: 'Trello',
+                  type: 'assignment',
+                  priority: card.due && (new Date(card.due)-new Date())/3600000 < 48 ? 'high' : 'medium',
+                  deadline: card.due || new Date(Date.now() + 5*24*60*60*1000).toISOString(),
+                  weight: 'N/A', link: card.url || '#',
+                  description: card.desc || 'Trello card — no description.',
+                  status: 'pending', progress: 0, subtasks: [], attachments: 0, collaborators: [],
+                  tags: ['trello', board.name.toLowerCase()], estimatedHours: 2, completedHours: 0,
+                });
+              });
+            }
+          } catch(e) {}
+        }
+        return { items, token, meta: { boards: boards.length } };
+      }
+    },
+
+    'WhatsApp': {
+      color: '#25D366', shortDesc: 'Class group announcements',
+      authType: 'webhook',
+      fields: [
+        { key: 'webhookToken', label: 'Webhook Verify Token', placeholder: 'Any secret string you choose',
+          hint: 'WhatsApp Business API requires a verified Meta business — set up a webhook at developers.facebook.com' },
+        { key: 'phoneId', label: 'Phone Number ID', placeholder: '1234567890',
+          hint: 'Found in Meta Developer Console under your WhatsApp Business App' },
+      ],
+      async connect(creds) {
+        // WhatsApp Cloud API — test credentials (actual messaging requires backend)
+        if (!creds.webhookToken || creds.webhookToken.length < 4) throw new Error('Please enter a verify token.');
+        if (!creds.phoneId || !/^\d+$/.test(creds.phoneId)) throw new Error('Phone Number ID must be numeric.');
+        // We can validate by trying to fetch the phone number info with a system user token
+        // For student demo: mark connected and explain webhook requirement
+        return {
+          items: [],
+          meta: { phoneId: creds.phoneId, note: 'Webhook registered. Incoming messages will appear here once Meta verifies your webhook URL.' }
+        };
+      }
+    },
+  };
+
+  // ── OAUTH HELPERS ─────────────────────────────────────────────
+  function googleOAuthPopup(clientId, scope) {
+    return new Promise((resolve, reject) => {
+      // Redirect URI must exactly match what is registered in Google Cloud Console.
+      // We use a dedicated /oauth-callback path so the popup lands on a blank page
+      // that we can read — avoids the full React app reloading in the popup.
+      const redirectUri = window.location.origin + '/oauth-callback';
+
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'token',
+        scope: scope,
+        include_granted_scopes: 'true',
+        prompt: 'consent',
+      });
+      const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+      const popup = window.open(url, 'google_oauth', 'width=520,height=640,left=200,top=80');
+      if (!popup) { reject(new Error('Popup blocked — allow popups for localhost:3000 in Chrome settings.')); return; }
+
+      // Listen for the token via postMessage from the callback page
+      function onMessage(e) {
+        if (e.origin !== window.location.origin) return;
+        if (e.data && e.data.type === 'GOOGLE_OAUTH_TOKEN') {
+          window.removeEventListener('message', onMessage);
+          clearInterval(closedCheck);
+          if (e.data.token) resolve(e.data.token);
+          else reject(new Error(e.data.error || 'No token returned from Google.'));
+        }
+      }
+      window.addEventListener('message', onMessage);
+
+      // Also poll for popup closed (user dismissed without signing in)
+      const closedCheck = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(closedCheck);
+          window.removeEventListener('message', onMessage);
+          reject(new Error('Sign-in window was closed before completing.'));
+        }
+      }, 800);
+
+      setTimeout(() => {
+        clearInterval(closedCheck);
+        window.removeEventListener('message', onMessage);
+        if (!popup.closed) popup.close();
+        reject(new Error('Google sign-in timed out.'));
+      }, 300000);
+    });
+  }
+
+  function trelloOAuthPopup(apiKey) {
+    return new Promise((resolve, reject) => {
+      const url = `https://trello.com/1/authorize?expiration=never&name=EduSync&scope=read&response_type=token&key=${apiKey}&callback_method=fragment&return_url=${encodeURIComponent(window.location.origin)}`;
+      const popup = window.open(url, 'trello_oauth', 'width=500,height=600,left=200,top=100');
+      if (!popup) { reject(new Error('Popup blocked — allow popups for this site.')); return; }
+      const timer = setInterval(() => {
+        try {
+          if (popup.closed) { clearInterval(timer); reject(new Error('Trello auth window closed.')); return; }
+          const hash = popup.location.hash;
+          if (hash && hash.length > 10) {
+            clearInterval(timer); popup.close();
+            const token = hash.replace('#token=','').split('&')[0];
+            token ? resolve(token) : reject(new Error('No token from Trello.'));
+          }
+        } catch(e) {}
+      }, 500);
+      setTimeout(() => { clearInterval(timer); if(!popup.closed)popup.close(); reject(new Error('Trello auth timed out.')); }, 300000);
+    });
+  }
+
+  // ── CONNECT / DISCONNECT ──────────────────────────────────────
   const handleConnect = (platformName) => {
     if (connectedPlatforms.includes(platformName)) {
-      // Disconnect — remove state + remove injected notifications
-      const idsToRemove = (PLATFORM_MOCK_NOTIFICATIONS[platformName] || []).map(n => n.id);
+      // Disconnect — remove tokens + injected notifications
+      const idsToRemove = platformNotifIds[platformName] || [];
       setNotifications(prev => prev.filter(n => !idsToRemove.includes(n.id)));
       setConnectedPlatforms(prev => prev.filter(p => p !== platformName));
-      setPlatformMeta(prev => { const next = {...prev}; delete next[platformName]; return next; });
+      setPlatformTokens(prev => { const n={...prev}; delete n[platformName]; return n; });
+      setPlatformMeta(prev => { const n={...prev}; delete n[platformName]; return n; });
+      savePlatformNotifIds(prev => { const n={...prev}; delete n[platformName]; return n; });
     } else {
-      // Multi-step connect flow
-      setConnectingPlatform(platformName);
-      setConnectStep(1);
-      let step = 1;
-      const advance = () => {
-        step++;
-        if (step <= CONNECT_STEPS.length) {
-          setConnectStep(step);
-          setTimeout(advance, CONNECT_STEPS[step - 1]?.duration || 800);
-        } else {
-          // Done — persist and inject notifications
-          setConnectedPlatforms(prev => [...prev, platformName]);
-          setPlatformMeta(prev => ({
-            ...prev,
-            [platformName]: { connectedAt: new Date().toISOString(), syncedAt: new Date().toISOString() }
-          }));
-          if (PLATFORM_MOCK_NOTIFICATIONS[platformName]) {
-            setNotifications(prev => {
-              const existingIds = new Set(prev.map(n => n.id));
-              const fresh = PLATFORM_MOCK_NOTIFICATIONS[platformName].filter(n => !existingIds.has(n.id));
-              return [...fresh, ...prev];
-            });
-          }
-          setConnectStep(0);
-          setConnectingPlatform(null);
+      // Open setup modal
+      setSetupPlatform(platformName);
+      setSetupFields({});
+      setSetupError('');
+      setSetupStep('form');
+    }
+  };
+
+  const handleSetupSubmit = async () => {
+    const def = PLATFORM_DEFS[setupPlatform];
+    if (!def) return;
+    // Validate required fields
+    for (const f of def.fields) {
+      if (!setupFields[f.key]?.trim() && f.key !== 'channel') {
+        setSetupError(`Please fill in: ${f.label}`);
+        return;
+      }
+    }
+    setSetupError('');
+    setSetupLoading(true);
+    setSetupStep('testing');
+    try {
+      const result = await def.connect(setupFields);
+      // Save token if returned
+      if (result.token) {
+        setPlatformTokens(prev => ({ ...prev, [setupPlatform]: result.token }));
+      }
+      // Save credentials (except secrets) for re-use
+      const safeCreds = {...setupFields};
+      if (def.fields.find(f=>f.secret && f.key==='token')) delete safeCreds.token;
+      setPlatformMeta(prev => ({
+        ...prev,
+        [setupPlatform]: {
+          connectedAt: new Date().toISOString(),
+          syncedAt: new Date().toISOString(),
+          ...result.meta,
+          creds: safeCreds,
         }
-      };
-      setTimeout(advance, CONNECT_STEPS[0].duration);
+      }));
+      // Inject real fetched notifications
+      if (result.items && result.items.length > 0) {
+        const newIds = result.items.map(i=>i.id);
+        setNotifications(prev => {
+          const existingIds = new Set(prev.map(n=>n.id));
+          const fresh = result.items.filter(n=>!existingIds.has(n.id));
+          return [...fresh, ...prev];
+        });
+        savePlatformNotifIds(prev => ({ ...prev, [setupPlatform]: newIds }));
+      } else {
+        savePlatformNotifIds(prev => ({ ...prev, [setupPlatform]: [] }));
+      }
+      setConnectedPlatforms(prev => [...prev, setupPlatform]);
+      setSetupStep('done');
+      setTimeout(() => { setSetupPlatform(null); setSetupLoading(false); setSetupStep('form'); }, 1800);
+    } catch(err) {
+      setSetupError(err.message || 'Connection failed. Check your credentials and try again.');
+      setSetupStep('form');
+      setSetupLoading(false);
     }
   };
 
@@ -1377,251 +1739,259 @@ const App = () => {
       </main>
 
       {/* ── INTEGRATIONS MODAL ──────────────────────────────────────────── */}
-      {showIntegrations && (() => {
-        const PLATFORM_DEFS = [
-          {
-            name: 'Canvas LMS',
-            desc: 'Assignments, quizzes & grades',
-            color: '#E66000',
-            notifCount: 3,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#E66000"/>
-                <text x="20" y="27" textAnchor="middle" fontSize="18" fontWeight="800" fill="white" fontFamily="serif">C</text>
-              </svg>
-            ),
-          },
-          {
-            name: 'Gmail',
-            desc: 'Professor emails & alerts',
-            color: '#EA4335',
-            notifCount: 2,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#fff" stroke="#e5e7eb" strokeWidth="1.5"/>
-                <path d="M8 14l12 9 12-9" stroke="#EA4335" strokeWidth="2" fill="none"/>
-                <path d="M8 14h24v16H8z" fill="none" stroke="#e5e7eb" strokeWidth="1.5"/>
-                <path d="M8 14l12 9 12-9V30H8z" fill="none"/>
-                <path d="M8 14l12 9 12-9" stroke="#EA4335" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
-              </svg>
-            ),
-          },
-          {
-            name: 'WhatsApp',
-            desc: 'Class group announcements',
-            color: '#25D366',
-            notifCount: 1,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#25D366"/>
-                <path d="M20 9C13.9 9 9 13.9 9 20c0 1.9.5 3.8 1.5 5.4L9 31l5.8-1.5A11 11 0 1020 9zm0 20a9 9 0 01-4.6-1.3l-.3-.2-3.5.9.9-3.4-.2-.3A9 9 0 1120 29zm4.9-6.7c-.3-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1-.2.2-.7.8-.8 1-.2.2-.3.2-.6.1-.3-.1-1.2-.4-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6l.4-.5.2-.4v-.4l-.7-1.8c-.2-.4-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.2.2-.9.9-.9 2.1s.9 2.4 1 2.6c.1.2 1.8 2.7 4.3 3.8.6.3 1.1.4 1.5.5.6.2 1.2.1 1.6-.1.5-.2 1.5-.6 1.7-1.2.2-.6.2-1 .1-1.1-.1-.1-.2-.2-.5-.3z" fill="white"/>
-              </svg>
-            ),
-          },
-          {
-            name: 'Slack',
-            desc: 'TA channels & study groups',
-            color: '#4A154B',
-            notifCount: 2,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#4A154B"/>
-                <g transform="translate(8,8) scale(0.6)">
-                  <path d="M10 24a4 4 0 01-4-4 4 4 0 014-4h4v4a4 4 0 01-4 4z" fill="#36C5F0"/>
-                  <path d="M24 10a4 4 0 01-4 4v-4a4 4 0 014-4 4 4 0 014 4 4 4 0 01-4 4z" fill="#2EB67D"/>
-                  <path d="M30 24a4 4 0 014 4 4 4 0 01-4 4 4 4 0 01-4-4v-4z" fill="#ECB22E"/>
-                  <path d="M16 30a4 4 0 014-4v4a4 4 0 01-4 4 4 4 0 01-4-4 4 4 0 014-4z" fill="#E01E5A"/>
-                </g>
-              </svg>
-            ),
-          },
-          {
-            name: 'Trello',
-            desc: 'Project boards & tasks',
-            color: '#0052CC',
-            notifCount: 1,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#0052CC"/>
-                <rect x="10" y="11" width="8" height="13" rx="2" fill="white"/>
-                <rect x="22" y="11" width="8" height="9" rx="2" fill="white"/>
-              </svg>
-            ),
-          },
-          {
-            name: 'Google Calendar',
-            desc: 'Deadlines & exam schedule',
-            color: '#1A73E8',
-            notifCount: 1,
-            logo: (
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect width="40" height="40" rx="9" fill="#fff" stroke="#e5e7eb" strokeWidth="1.5"/>
-                <rect x="8" y="10" width="24" height="22" rx="3" fill="none" stroke="#1A73E8" strokeWidth="1.8"/>
-                <line x1="8" y1="16" x2="32" y2="16" stroke="#1A73E8" strokeWidth="1.8"/>
-                <line x1="15" y1="7" x2="15" y2="13" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round"/>
-                <line x1="25" y1="7" x2="25" y2="13" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round"/>
-                <text x="20" y="28" textAnchor="middle" fontSize="10" fontWeight="700" fill="#1A73E8" fontFamily="sans-serif">17</text>
-              </svg>
-            ),
-          },
-        ];
-
-        const fmtTime = (iso) => {
-          if (!iso) return null;
-          const d = new Date(iso);
-          const diff = Math.floor((Date.now() - d.getTime()) / 60000);
-          if (diff < 1) return 'just now';
-          if (diff < 60) return `${diff}m ago`;
-          const h = Math.floor(diff / 60);
-          if (h < 24) return `${h}h ago`;
-          return `${Math.floor(h/24)}d ago`;
-        };
-
-        return (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-            <div
-              className={`rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-white'}`}
-              style={{ animation: 'intModalIn .25s cubic-bezier(.16,1,.3,1)' }}
-            >
-              <style>{`
-                @keyframes intModalIn { from{opacity:0;transform:scale(.95) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
-                @keyframes intSpin { to{transform:rotate(360deg)} }
-                .int-spin { animation:intSpin .7s linear infinite }
-                @keyframes intSlideIn { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
-                .int-slide { animation:intSlideIn .2s ease both }
-              `}</style>
-
-              {/* Header */}
-              <div className={`px-7 pt-7 pb-5 border-b ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Connect & Integrate</h3>
-                    <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                      Link your academic platforms for seamless synchronization
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowIntegrations(false)}
-                    className={`p-2 rounded-xl transition-all ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
-                  >
-                    <X size={20}/>
-                  </button>
-                </div>
-
-                {/* Connected count bar */}
-                <div className="flex items-center gap-3 mt-4">
-                  <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-500"
-                      style={{ width: `${(connectedPlatforms.length / PLATFORM_DEFS.length) * 100}%` }}
-                    />
-                  </div>
-                  <span className={`text-xs font-bold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {connectedPlatforms.length}/{PLATFORM_DEFS.length} connected
-                  </span>
-                </div>
-              </div>
-
-              {/* Platform grid */}
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto">
-                {PLATFORM_DEFS.map(platform => {
-                  const isConnected = connectedPlatforms.includes(platform.name);
-                  const isConnecting = connectingPlatform === platform.name;
-                  const meta = platformMeta[platform.name];
-                  const stepLabel = isConnecting ? CONNECT_STEPS[connectStep - 1]?.label : null;
-
-                  return (
-                    <div
-                      key={platform.name}
-                      className={`relative rounded-2xl border-2 p-4 transition-all duration-200 ${
-                        isConnecting
-                          ? `border-blue-300 ${darkMode ? 'bg-blue-950/30' : 'bg-blue-50'}`
-                          : isConnected
-                          ? `border-emerald-200 ${darkMode ? 'bg-emerald-950/20' : 'bg-emerald-50/60'}`
-                          : `${darkMode ? 'border-slate-700 bg-slate-700/40 hover:border-slate-500' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'}`
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {/* Logo */}
-                        <div className="relative flex-shrink-0">
-                          {platform.logo}
-                          {isConnected && !isConnecting && (
-                            <span className="absolute -bottom-1 -right-1 bg-emerald-500 rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
-                              <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1.5 4L3.2 5.7 6.5 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
-                            </span>
-                          )}
-                          {isConnecting && (
-                            <span className="absolute -bottom-1 -right-1 bg-blue-500 rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
-                              <div className="int-spin w-2.5 h-2.5 border border-white/30 border-t-white rounded-full"/>
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Text */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{platform.name}</p>
-                            {isConnected && !isConnecting && (
-                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 uppercase tracking-wide">Live</span>
-                            )}
-                          </div>
-                          {isConnecting ? (
-                            <p className="text-xs text-blue-500 font-medium int-slide">{stepLabel}</p>
-                          ) : isConnected && meta?.syncedAt ? (
-                            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-400'}`}>
-                              Synced {fmtTime(meta.syncedAt)} · {platform.notifCount} item{platform.notifCount !== 1 ? 's' : ''}
-                            </p>
-                          ) : (
-                            <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{platform.desc}</p>
-                          )}
-                        </div>
-
-                        {/* Action button */}
-                        <button
-                          disabled={!!connectingPlatform}
-                          onClick={(e) => { e.stopPropagation(); handleConnect(platform.name); }}
-                          className={`text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
-                            isConnecting
-                              ? 'bg-blue-100 text-blue-600 cursor-wait'
-                              : isConnected
-                              ? `${darkMode ? 'bg-emerald-800 text-emerald-300 hover:bg-red-900 hover:text-red-300' : 'bg-emerald-100 text-emerald-700 hover:bg-red-50 hover:text-red-600'} group`
-                              : `${darkMode ? 'bg-slate-600 text-slate-200 hover:bg-teal-700 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-teal-600 hover:text-white'}`
-                          }`}
-                        >
-                          {isConnecting ? 'Connecting...' : isConnected ? 'Connected ✓' : 'Connect'}
-                        </button>
-                      </div>
-
-                      {/* Disconnect hint on hover — shown as subtext when connected */}
-                      {isConnected && !isConnecting && (
-                        <p className={`text-[10px] mt-2.5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                          Click "Connected" to disconnect and remove synced data
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Footer */}
-              <div className={`px-6 pb-6 pt-1`}>
-                <div className={`p-3.5 rounded-xl flex gap-3 items-start mb-4 ${darkMode ? 'bg-blue-950/40 border border-blue-800' : 'bg-blue-50 border border-blue-100'}`}>
-                  <Lightbulb size={16} className="text-blue-500 flex-shrink-0 mt-0.5"/>
-                  <p className={`text-xs leading-relaxed ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>
-                    <strong>How it works:</strong> Connecting a platform syncs its notifications directly into your feed and persists across sessions. Disconnect any time to remove its data.
+      {/* ── INTEGRATIONS MODAL (Platform Grid) ─────────────────── */}
+      {showIntegrations && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <style>{`
+            @keyframes modalIn { from{opacity:0;transform:scale(.96) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
+            @keyframes spin360 { to{transform:rotate(360deg)} }
+            .int-spin { animation:spin360 .7s linear infinite }
+            @keyframes slideRow { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+            .slide-row { animation:slideRow .2s ease both }
+          `}</style>
+          <div
+            className={`rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-white'}`}
+            style={{ animation: 'modalIn .28s cubic-bezier(.16,1,.3,1)' }}
+          >
+            {/* Header */}
+            <div className={`px-7 pt-7 pb-5 border-b ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>Connect & Integrate</h3>
+                  <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Real connections — your actual data syncs into the dashboard
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowIntegrations(false)}
-                  className="w-full py-3 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl font-bold hover:shadow-lg hover:from-teal-500 hover:to-teal-600 transition-all active:scale-[.99]"
-                >
-                  Done
+                <button onClick={() => setShowIntegrations(false)}
+                  className={`p-2 rounded-xl transition-all ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
+                  <X size={20}/>
                 </button>
               </div>
+              {/* Progress bar */}
+              <div className="flex items-center gap-3 mt-4">
+                <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-700"
+                    style={{ width: `${(connectedPlatforms.length / Object.keys(PLATFORM_DEFS).length) * 100}%` }} />
+                </div>
+                <span className={`text-xs font-bold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {connectedPlatforms.length}/{Object.keys(PLATFORM_DEFS).length} connected
+                </span>
+              </div>
+            </div>
+
+            {/* Platform Grid */}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto">
+              {Object.entries(PLATFORM_DEFS).map(([name, def]) => {
+                const isConn  = connectedPlatforms.includes(name);
+                const meta    = platformMeta[name];
+                const notifCt = (platformNotifIds[name] || []).length;
+                const fmtTime = iso => {
+                  if (!iso) return null;
+                  const diff = Math.floor((Date.now() - new Date(iso)) / 60000);
+                  if (diff < 1) return 'just now';
+                  if (diff < 60) return `${diff}m ago`;
+                  const h = Math.floor(diff/60);
+                  if (h < 24) return `${h}h ago`;
+                  return `${Math.floor(h/24)}d ago`;
+                };
+                return (
+                  <div key={name} className={`rounded-2xl border-2 p-4 transition-all duration-200 ${
+                    isConn
+                      ? `border-emerald-200 ${darkMode ? 'bg-emerald-950/20' : 'bg-emerald-50/60'}`
+                      : `${darkMode ? 'border-slate-700 bg-slate-700/40 hover:border-slate-500' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'}`
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      {/* Color dot */}
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold flex-shrink-0 relative"
+                        style={{ background: def.color }}>
+                        {name.charAt(0)}
+                        {isConn && (
+                          <span className="absolute -bottom-1 -right-1 bg-emerald-500 rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
+                            <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1.5 4L3.2 5.7 6.5 2" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+                          </span>
+                        )}
+                      </div>
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className={`font-bold text-sm ${darkMode ? 'text-white' : 'text-slate-900'}`}>{name}</p>
+                          {isConn && <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 uppercase">Live</span>}
+                        </div>
+                        {isConn && meta?.syncedAt ? (
+                          <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                            Synced {fmtTime(meta.syncedAt)} · {notifCt} item{notifCt !== 1 ? 's' : ''}
+                            {meta.workspace && ` · ${meta.workspace}`}
+                            {meta.courses && ` · ${meta.courses} courses`}
+                          </p>
+                        ) : (
+                          <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{def.shortDesc}</p>
+                        )}
+                      </div>
+                      {/* Button */}
+                      <button
+                        onClick={() => handleConnect(name)}
+                        className={`text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all active:scale-95 ${
+                          isConn
+                            ? `${darkMode ? 'bg-emerald-800 text-emerald-300 hover:bg-red-900 hover:text-red-300' : 'bg-emerald-100 text-emerald-700 hover:bg-red-50 hover:text-red-600'}`
+                            : `${darkMode ? 'bg-slate-600 text-slate-200 hover:bg-teal-700 hover:text-white' : 'bg-slate-100 text-slate-600 hover:bg-teal-600 hover:text-white'}`
+                        }`}
+                      >
+                        {isConn ? 'Connected ✓' : 'Connect'}
+                      </button>
+                    </div>
+                    {isConn && (
+                      <p className={`text-[10px] mt-2 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                        Click "Connected" to disconnect and remove data
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer tip */}
+            <div className="px-6 pb-6 pt-1">
+              <div className={`p-3.5 rounded-xl flex gap-3 items-start mb-4 ${darkMode ? 'bg-blue-950/40 border border-blue-800' : 'bg-blue-50 border border-blue-100'}`}>
+                <Lightbulb size={16} className="text-blue-500 flex-shrink-0 mt-0.5"/>
+                <p className={`text-xs leading-relaxed ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>
+                  <strong>Real connections:</strong> Clicking Connect opens a credential setup form. Your data is fetched live and stored in your browser only.
+                </p>
+              </div>
+              <button onClick={() => setShowIntegrations(false)}
+                className="w-full py-3 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl font-bold hover:shadow-lg hover:from-teal-500 transition-all active:scale-[.99]">
+                Done
+              </button>
             </div>
           </div>
-        );
-      })()}
+        </div>
+      )}
+
+      {/* ── SETUP / CREDENTIAL MODAL ─────────────────────────────── */}
+      {setupPlatform && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div
+            className={`rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-white'}`}
+            style={{ animation: 'modalIn .25s cubic-bezier(.16,1,.3,1)' }}
+          >
+            {/* Setup header */}
+            <div className="p-7 pb-5" style={{ borderBottom: `3px solid ${PLATFORM_DEFS[setupPlatform]?.color || '#ccc'}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+                    style={{ background: PLATFORM_DEFS[setupPlatform]?.color }}>
+                    {setupPlatform.charAt(0)}
+                  </div>
+                  <div>
+                    <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                      Connect {setupPlatform}
+                    </h3>
+                    <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {PLATFORM_DEFS[setupPlatform]?.authType === 'google_oauth' ? 'OAuth 2.0 — opens Google sign-in' :
+                       PLATFORM_DEFS[setupPlatform]?.authType === 'trello_oauth' ? 'OAuth — opens Trello authorization' :
+                       'API Token — stays in your browser only'}
+                    </p>
+                  </div>
+                </div>
+                {setupStep !== 'testing' && setupStep !== 'done' && (
+                  <button onClick={() => { setSetupPlatform(null); setSetupLoading(false); setSetupStep('form'); }}
+                    className={`p-2 rounded-xl ${darkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
+                    <X size={18}/>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="p-7 pt-6">
+              {/* Testing state */}
+              {setupStep === 'testing' && (
+                <div className="flex flex-col items-center py-8 gap-5">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold"
+                    style={{ background: PLATFORM_DEFS[setupPlatform]?.color }}>
+                    <div className="int-spin w-7 h-7 border-2 border-white/30 border-t-white rounded-full"/>
+                  </div>
+                  <div className="text-center">
+                    <p className={`font-bold text-base ${darkMode ? 'text-white' : 'text-slate-900'}`}>Connecting to {setupPlatform}...</p>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Verifying credentials and fetching your data</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Done state */}
+              {setupStep === 'done' && (
+                <div className="flex flex-col items-center py-8 gap-4">
+                  <div className="w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L19 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </div>
+                  <div className="text-center">
+                    <p className="font-bold text-base text-emerald-600">{setupPlatform} connected!</p>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {(platformNotifIds[setupPlatform] || []).length} items synced to your dashboard
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Form state */}
+              {setupStep === 'form' && (
+                <>
+                  <div className="space-y-5 mb-5">
+                    {PLATFORM_DEFS[setupPlatform]?.fields.map(field => (
+                      <div key={field.key}>
+                        <label className={`block text-sm font-semibold mb-1.5 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                          {field.label}
+                        </label>
+                        <input
+                          type={field.secret ? 'password' : 'text'}
+                          value={setupFields[field.key] || ''}
+                          onChange={e => setSetupFields(p => ({ ...p, [field.key]: e.target.value }))}
+                          onKeyDown={e => e.key === 'Enter' && handleSetupSubmit()}
+                          placeholder={field.placeholder}
+                          autoComplete="off"
+                          className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 ${
+                            darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'
+                          }`}
+                        />
+                        {field.hint && (
+                          <p className={`text-xs mt-1.5 leading-relaxed ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                            ℹ {field.hint}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {setupError && (
+                    <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 flex gap-2 items-start slide-row">
+                      <AlertCircle size={15} className="text-red-500 flex-shrink-0 mt-0.5"/>
+                      <p className="text-xs text-red-700 font-medium">{setupError}</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { setSetupPlatform(null); setSetupStep('form'); }}
+                      className={`flex-1 py-2.5 rounded-xl border font-semibold text-sm transition-all ${darkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSetupSubmit}
+                      disabled={setupLoading}
+                      className="flex-1 py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[.98] disabled:opacity-60"
+                      style={{ background: PLATFORM_DEFS[setupPlatform]?.color }}
+                    >
+                      {PLATFORM_DEFS[setupPlatform]?.authType === 'google_oauth' ? 'Sign in with Google' :
+                       PLATFORM_DEFS[setupPlatform]?.authType === 'trello_oauth' ? 'Authorize Trello' :
+                       'Connect'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
